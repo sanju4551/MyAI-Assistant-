@@ -1,6 +1,9 @@
 # 🤖 MyAI – Intelligent Personal Assistant
 
 **MyAI** is a personal AI assistant built with Python, Streamlit, Ollama, and SQLite. It helps users chat with AI, manage conversations, work with documents, and complete everyday text-based tasks.
+## 🖥️ MyAI Application Screenshot
+
+![MyAI Assistant](MyAI-Screenshot.png)
 
 ## ✨ Features
 
