@@ -3,6 +3,7 @@ import re
 import streamlit as st
 import ollama
 from ddgs import DDGS
+from google import genai
 from calculator import calculate
 from profile import load_profile, save_profile
 
@@ -28,14 +29,23 @@ st.set_page_config(
 )
 
 MODEL_NAME = "qwen3:1.7b"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 MAX_INPUT_LENGTH = 5000
 MAX_PDF_LENGTH = 12000
 
 
 # ==========================================
-# 2. OLLAMA CONNECTION CHECK
+# 2. AI PROVIDER CONFIGURATION
 # ==========================================
+
+try:
+    GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "").strip()
+except Exception:
+    GEMINI_API_KEY = ""
+
+USE_GEMINI = bool(GEMINI_API_KEY)
+
 
 def check_ollama_connection():
     try:
@@ -45,12 +55,63 @@ def check_ollama_connection():
         return False
 
 
-if not check_ollama_connection():
-    st.error(
-        "Ollama is not running. Please start Ollama "
-        "and refresh MyAI."
+if USE_GEMINI:
+    try:
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception:
+        st.error("Could not initialize Gemini. Check your API key.")
+        st.stop()
+else:
+    gemini_client = None
+
+    if not check_ollama_connection():
+        st.error(
+            "Ollama is not running. Start Ollama and refresh MyAI, "
+            "or configure GEMINI_API_KEY in Streamlit Cloud Secrets."
+        )
+        st.stop()
+
+
+def generate_ai_response(messages):
+    """
+    Generate an answer using Gemini in the cloud
+    or Ollama on the local computer.
+    """
+
+    if USE_GEMINI:
+
+        conversation_text = ""
+
+        for message in messages:
+            role = message["role"]
+
+            if role == "system":
+                label = "SYSTEM INSTRUCTIONS"
+            elif role == "assistant":
+                label = "MYAI"
+            else:
+                label = "USER"
+
+            conversation_text += (
+                f"\n\n{label}:\n{message['content']}"
+            )
+
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=conversation_text
+        )
+
+        if not response.text:
+            raise ValueError("Gemini returned an empty response.")
+
+        return response.text
+
+    response = ollama.chat(
+        model=MODEL_NAME,
+        messages=messages
     )
-    st.stop()
+
+    return response["message"]["content"]
 
 
 # ==========================================
@@ -137,8 +198,7 @@ def is_calculation_request(question):
 # ==========================================
 
 SYSTEM_PROMPT = """
-You are MyAI, an intelligent personal AI assistant
-powered by Qwen3 1.7B through Ollama.
+You are MyAI, an intelligent personal AI assistant.
 
 Your responsibilities:
 - Answer questions clearly and accurately.
@@ -294,6 +354,11 @@ with st.sidebar:
 
     st.title("🤖 MyAI")
     st.caption("Your personal AI assistant")
+
+    if USE_GEMINI:
+        st.success("☁️ Online AI: Gemini")
+    else:
+        st.success("💻 Local AI: Ollama")
 
     st.divider()
 
@@ -517,6 +582,7 @@ with st.sidebar:
                     st.rerun()
 
     except Exception:
+        conversations = []
         st.error("Could not load chat history.")
 
     st.divider()
@@ -566,8 +632,13 @@ with st.sidebar:
     # Settings
     st.subheader("⚙️ Settings")
 
-    st.write("**AI Model:** Qwen3 1.7B")
-    st.write("**AI Provider:** Ollama")
+    if USE_GEMINI:
+        st.write("**AI Model:** Gemini 2.5 Flash")
+        st.write("**AI Provider:** Google Gemini")
+    else:
+        st.write("**AI Model:** Qwen3 1.7B")
+        st.write("**AI Provider:** Ollama")
+
     st.write("**Memory:** SQLite Database")
     st.write("**Web Search:** DuckDuckGo")
     st.write("**Calculator:** Python")
@@ -686,30 +757,23 @@ with st.expander("Open AI Text Tools"):
 
                 with st.spinner("MyAI is working..."):
 
-                    response = ollama.chat(
-                        model=MODEL_NAME,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": build_system_prompt()
-                            },
-                            {
-                                "role": "user",
-                                "content": instruction
-                            }
-                        ]
-                    )
+                    response = generate_ai_response([
+                        {
+                            "role": "system",
+                            "content": build_system_prompt()
+                        },
+                        {
+                            "role": "user",
+                            "content": instruction
+                        }
+                    ])
 
                     st.markdown("### ✨ Result")
+                    st.markdown(response)
 
-                    st.markdown(
-                        response["message"]["content"]
-                    )
-
-            except Exception:
+            except Exception as error:
                 st.error(
-                    "AI tool failed. Please check Ollama "
-                    "and try again."
+                    f"AI tool failed: {error}"
                 )
 
 
@@ -814,10 +878,10 @@ if prompt:
                                 f"**Answer:** {calculation_result}"
                             )
 
-                    # Ollama AI
+                    # Gemini or Ollama AI
                     if answer is None:
 
-                        ollama_messages = [
+                        ai_messages = [
                             {
                                 "role": "system",
                                 "content": build_system_prompt()
@@ -827,7 +891,7 @@ if prompt:
                         # Previous conversation history
                         for role, content in st.session_state.messages[:-1]:
 
-                            ollama_messages.append({
+                            ai_messages.append({
                                 "role": role,
                                 "content": content
                             })
@@ -868,17 +932,12 @@ Use these results to answer the user's question.
 Include useful source links in your answer.
 """
 
-                        ollama_messages.append({
+                        ai_messages.append({
                             "role": "user",
                             "content": current_question
                         })
 
-                        response = ollama.chat(
-                            model=MODEL_NAME,
-                            messages=ollama_messages
-                        )
-
-                        answer = response["message"]["content"]
+                        answer = generate_ai_response(ai_messages)
 
                     # Display answer
                     st.markdown(answer)
@@ -896,8 +955,7 @@ Include useful source links in your answer.
 
             st.rerun()
 
-        except Exception:
+        except Exception as error:
             st.error(
-                "Something went wrong while processing your message. "
-                "Please check Ollama and try again."
+                f"Something went wrong: {error}"
             )
