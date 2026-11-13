@@ -29,7 +29,7 @@ st.set_page_config(
 )
 
 MODEL_NAME = "qwen3:1.7b"
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
 
 MAX_INPUT_LENGTH = 5000
 MAX_PDF_LENGTH = 12000
